@@ -25,7 +25,7 @@ knitr::opts_chunk$set(
 To run this benchmark, you will need the `tensorflow` and `processx` packages installed, along with a CUDA-enabled NVIDIA GPU.
 
 ```{r lib-check, message=FALSE, warning=FALSE}
-# library(gpumux)
+library(gpumux)
 library(mirai)
 library(tensorflow)
 library(microbenchmark)
