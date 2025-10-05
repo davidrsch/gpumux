@@ -179,13 +179,13 @@ gpu_daemons <- function(
           "gpumux: `tensorflow` package not found in worker, cannot set memory limit."
         )
       } else {
-        gpus <- tensorflow::tf$config$list_physical_devices("GPU")
+        gpus <- tf$config$list_physical_devices("GPU")
         if (length(gpus) > 0) {
           tryCatch(
             {
-              tensorflow::tf$config$set_logical_device_configuration(
+              tf$config$set_logical_device_configuration(
                 gpus[[1]],
-                list(tensorflow::tf$config$LogicalDeviceConfiguration(
+                list(tf$config$LogicalDeviceConfiguration(
                   memory_limit = mem_limit
                 ))
               )
