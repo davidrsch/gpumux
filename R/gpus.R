@@ -25,7 +25,7 @@ list_gpus <- function() {
 
   # --- NVIDIA GPU Detection ---
   nvidia_gpus <- .list_nvidia_gpus()
-  if (nrow(nvidia_gpus) > 0) {
+  if (!is.null(nvidia_gpus) && nrow(nvidia_gpus) > 0) {
     all_gpus <- rbind(all_gpus, nvidia_gpus)
   }
 
