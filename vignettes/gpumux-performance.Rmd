@@ -387,7 +387,7 @@ oom_task <- function(device = "gpu") {
   library(tensorflow)
   device_str <- if (device == "gpu") "/gpu:0" else "/cpu:0"
   with(tf$device(device_str), {
-    for (i in seq_len(10)) {
+    for (i in seq_len(30)) {
       x <- tf$random$normal(shape(2048, 2048))
       y <- tf$linalg$matmul(x, x)
       as.numeric(tf$reduce_sum(y))
