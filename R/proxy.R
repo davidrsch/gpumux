@@ -3,89 +3,20 @@
   # the scripts dynamically. This avoids file path issues and is more robust.
 
   # --- 1. Define the Ephemeral Worker Logic as an Expression ---
-  # This worker reads a task from stdin and writes the result to stdout.
+  # This now simply calls the testable helper function.
   worker_expr <- rlang::expr({
-    tryCatch(
-      {
-        # Use binary-mode connections for robustness.
-        con_in <- file("stdin", "rb")
-        task <- readRDS(con_in)
-        close(con_in)
-
-        result <- list(value = eval(task))
-
-        # Write the result object to stdout.
-        con_out <- stdout()
-        saveRDS(result, file = con_out)
-      },
-      error = function(e) {
-        # If an error occurs, serialize the error object to stdout so the
-        # proxy can catch it and propagate it.
-        tryCatch(
-          {
-            saveRDS(e, file = stdout())
-          },
-          error = function(e2) {
-            # Final fallback if we can't even save the error.
-          }
-        )
-      }
-    )
+    gpumux:::.run_worker_task()
   })
 
   # --- 2. Define the Proxy Loop Logic as an Expression ---
-  # This expression takes the `worker_expr` and injects it.
+  # This now simply calls the testable helper function.
   proxy_loop_expr <- rlang::expr({
-    # This code runs in the long-lived proxy daemon.
-
     # The worker script is passed in as a command-line argument.
     worker_script_path <- commandArgs(trailingOnly = TRUE)[1]
 
     # The main task handler that mirai will call.
     .proxy_task_handler <- function(task) {
-      # Launch the ephemeral worker, piping stdin/stdout for communication.
-      px <- processx::process$new(
-        command = R.home("bin/Rscript"),
-        args = c("--vanilla", worker_script_path),
-        stdin = "|",
-        stdout = "|",
-        stderr = "|"
-      )
-
-      # Write the serialized task to the worker's stdin pipe.
-      px$write_input(saveRDS(task, NULL))
-      px$close_input()
-
-      # Wait for the process to finish.
-      px$wait()
-
-      # Check for execution errors.
-      if (px$get_exit_status() != 0) {
-        stop(
-          "Ephemeral worker failed. Stderr: ",
-          paste(px$read_all_stderr_lines(), collapse = "\n")
-        )
-      }
-
-      # Read the raw binary output from stdout.
-      output_bytes <- px$read_output_raw()
-      if (length(output_bytes) == 0) {
-        # Handle cases where the worker produces no output unexpectedly.
-        stop(
-          "Ephemeral worker produced no output. Stderr: ",
-          paste(px$read_all_stderr_lines(), collapse = "\n")
-        )
-      }
-
-      # Unserialize the result from the raw byte vector.
-      result <- readRDS(rawConnection(output_bytes))
-
-      # Propagate errors that occurred within the worker's R code.
-      if (inherits(result, "error")) {
-        stop(result)
-      } else {
-        return(result$value)
-      }
+      gpumux:::.handle_proxy_task(task, worker_script_path)
     }
 
     # Return the handler for mirai to use.
@@ -99,8 +30,20 @@
   proxy_script_file <- tempfile(fileext = ".R")
 
   # Write the expressions into the temp files.
-  writeLines(rlang::expr_deparse(worker_expr), worker_script_file)
-  writeLines(rlang::expr_deparse(proxy_loop_expr), proxy_script_file)
+  # The worker script needs to load the package to find the helper.
+  worker_script_content <- paste(
+    "library(gpumux)",
+    rlang::expr_deparse(worker_expr),
+    sep = "\n"
+  )
+  proxy_script_content <- paste(
+    "library(gpumux)",
+    rlang::expr_deparse(proxy_loop_expr),
+    sep = "\n"
+  )
+  writeLines(worker_script_content, worker_script_file)
+  writeLines(proxy_script_content, proxy_script_file)
+
 
   # Ensure temp files are cleaned up when the R session ends.
   reg.finalizer(globalenv(), function(e) {
@@ -150,3 +93,4 @@
 
   return(daemons)
 }
+
