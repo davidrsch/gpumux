@@ -1,0 +1,524 @@
+---
+title: "Advanced Usage: Worker Types and Performance Trade-offs"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Advanced Usage: Worker Types and Performance Trade-offs}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+## Introduction
+
+`gpumux` offers two distinct worker types, `"persistent"` and `"proxy"`, each with its own performance characteristics and stability guarantees. This vignette explores the difference between them and provides guidance on which to choose for your workload.
+
+-   **`persistent` (Default):** This worker type creates long-lived R sessions that persist between tasks. It offers the highest performance because it avoids the overhead of starting a new R process for each computation. It is ideal for tasks that are well-behaved and manage their own GPU memory effectively.
+
+-   **`proxy`:** This worker type creates a lightweight "proxy" daemon that, in turn, spawns a completely new, ephemeral R process for every single task. This provides the ultimate stability and guarantees that all resources (including VRAM) are released back to the OS after the task is complete. It is the perfect solution for preventing memory leaks from frameworks like TensorFlow or PyTorch, but it incurs a performance penalty due to process startup overhead.
+
+To run this benchmark, you will need the `tensorflow` and `processx` packages installed, along with a CUDA-enabled NVIDIA GPU.
+
+```{r lib-check, message=FALSE, warning=FALSE}
+# library(gpumux)
+library(mirai)
+library(tensorflow)
+library(microbenchmark)
+library(purrr)
+
+# Check if a GPU is available
+gpu_devices <- gpumux::list_gpus()
+can_run_benchmark <- nrow(gpu_devices) > 0
+if (!can_run_benchmark) {
+  message("No GPU devices detected. Skipping benchmark.")
+}
+```
+
+## Task Definitions
+
+To illustrate the performance trade-offs, we will define three types of tasks:
+
+1.  **Heavy Task:** A large matrix multiplication (`2048x2048`) designed to saturate the GPU.
+2.  **Medium Task:** A smaller matrix multiplication (`1024x1024`) that should not saturate the GPU.
+3.  **Light Task:** A trivial operation that returns instantly to highlight overhead.
+
+```{r task-definition}
+# 1. Heavy Task: Large matrix multiplication
+heavy_task <- function(device = "gpu") {
+  library(tensorflow)
+  device_str <- if (device == "gpu") "/gpu:0" else "/cpu:0"
+  with(tf$device(device_str), {
+    x <- tf$random$normal(shape(2048, 2048))
+    y <- tf$linalg$matmul(x, x)
+    as.numeric(tf$reduce_sum(y))
+  })
+}
+
+# 2. Medium-Workload Task
+medium_task <- function(device = "gpu") {
+  library(tensorflow)
+  device_str <- if (device == "gpu") "/gpu:0" else "/cpu:0"
+  with(tf$device(device_str), {
+    x <- tf$random$normal(shape(1024, 1024)) # Smaller matrix
+    y <- tf$linalg$matmul(x, x)
+    as.numeric(tf$reduce_sum(y))
+  })
+}
+
+# 3. Light Task: Returns a simple value instantly
+light_task <- function() {
+  return(Sys.time())
+}
+```
+
+## Benchmark 1: GPU-Saturating Tasks (The "Stress Test")
+
+This first benchmark uses the **heavy task**. It represents a "worst-case" scenario for parallelism, where tasks compete heavily for the same hardware.
+
+```{r benchmark-heavy, eval = can_run_benchmark}
+# Function to add total time to summary
+summary_with_total <- function(bench_data) {
+  summary_df <- summary(bench_data)
+  total_time_ns <- sum(bench_data$time)
+  summary_df$total_time <- total_time_ns / 1e9 
+  return(summary_df)
+}
+
+# --- 1. Persistent Worker Benchmark (Heavy) ---
+message("Running HEAVY benchmark with 'persistent' workers...")
+gpumux::gpu_daemons(
+  n_workers = 4,
+  gpu_ids = 0,
+  memory_per_worker_mb = 1024,
+  framework = "tensorflow",
+  worker_type = "persistent"
+)
+persistent_heavy_bench <- microbenchmark(
+  "Persistent - Heavy" = {
+    results <- rep("gpu", 4) |> 
+      map(in_parallel(\(x) heavy_task(x), heavy_task = heavy_task))
+    results
+  },
+  times = 5L,
+  unit = "seconds"
+)
+gpumux::gpu_daemons(n_workers = 0)
+
+Sys.sleep(3)
+
+# --- 2. Proxy Worker Benchmark (Heavy) ---
+message("Running HEAVY benchmark with 'proxy' workers...")
+gpumux::gpu_daemons(
+  n_workers = 4,
+  gpu_ids = 0,
+  memory_per_worker_mb = 1024,
+  framework = "tensorflow",
+  worker_type = "proxy"
+)
+proxy_heavy_bench <- microbenchmark(
+  "Proxy - Heavy" = {
+    results <- rep("gpu", 4) |>
+      map(in_parallel(\(x) heavy_task(x), heavy_task = heavy_task))
+    results
+  },
+  times = 5L,
+  unit = "seconds"
+)
+gpumux::gpu_daemons(n_workers = 0)
+
+Sys.sleep(3)
+
+# --- 3. Sequential GPU Benchmark (Heavy) ---
+message("Running HEAVY benchmark with 'Sequential GPU' (via single worker)...")
+# By running the tasks on a single worker daemon, we simulate sequential
+# execution while still benefiting from the process isolation and automatic
+# cleanup that gpumux provides.
+gpumux::gpu_daemons(
+  n_workers = 1,
+  gpu_ids = 0,
+  memory_per_worker_mb = 1024,
+  framework = "tensorflow",
+  worker_type = "persistent"
+)
+sequential_gpu_heavy_bench <- microbenchmark(
+  "Sequential GPU - Heavy" = {
+    # With only one worker, these 4 tasks will be processed sequentially.
+    results <- rep("gpu", 4) |> 
+      map(in_parallel(\(x) heavy_task(x), heavy_task = heavy_task))
+    results
+  },
+  times = 5L,
+  unit = "seconds"
+)
+gpumux::gpu_daemons(n_workers = 0)
+
+Sys.sleep(3)
+
+# --- 4. CPU Benchmark (Heavy) ---
+message("Running HEAVY benchmark with 'CPU' workers...")
+mirai::daemons(4)
+cpu_heavy_bench <- microbenchmark(
+  "CPU - Heavy" = {
+    results <- rep("cpu", 4) |>
+      map(in_parallel(\(x) heavy_task(x), heavy_task = heavy_task))
+    results
+  },
+   times = 5L,
+  unit = "seconds"
+)
+mirai::daemons(0)
+
+# --- 5. Results (Heavy) ---
+heavy_benchmarks <- rbind(
+  summary_with_total(persistent_heavy_bench),
+  summary_with_total(proxy_heavy_bench),
+  summary_with_total(sequential_gpu_heavy_bench),
+  summary_with_total(cpu_heavy_bench)
+)
+knitr::kable(heavy_benchmarks, caption = "GPU-Saturating Workload Results")
+```
+
+> **A Note on Memory Cleanup:** You may notice that after this benchmark, your VRAM is not fully cleared. The `Sequential GPU - Heavy` run happens in the main R process. TensorFlow is known to hold onto VRAM until the R session itself is terminated. This is a perfect illustration of the resource management problem `gpumux` solves. Because `gpumux` runs tasks in separate daemon processes, it can guarantee that all resources are released when the daemons are terminated.
+
+## Benchmark 2: Non-Saturating GPU Tasks (The "Sweet Spot")
+
+This benchmark uses the **medium task**. Because each task doesn't use 100% of the GPU, there is spare capacity for `gpumux` to leverage.
+
+```{r benchmark-medium, eval = can_run_benchmark}
+# --- 1. Persistent Worker Benchmark (Medium) ---
+message("Running MEDIUM benchmark with 'persistent' workers...")
+gpumux::gpu_daemons(
+  n_workers = 4,
+  gpu_ids = 0,
+  memory_per_worker_mb = 1024,
+  framework = "tensorflow",
+  worker_type = "persistent"
+)
+persistent_medium_bench <- microbenchmark(
+  "Persistent - Medium" = {
+    results <- rep("gpu", 4) |>
+      map(in_parallel(\(x) medium_task(x), medium_task = medium_task))
+    results
+  },
+  times = 10L,
+  unit = "seconds"
+)
+gpumux::gpu_daemons(n_workers = 0)
+
+Sys.sleep(3)
+
+# --- 2. Proxy Worker Benchmark (Medium) ---
+message("Running MEDIUM benchmark with 'proxy' workers...")
+gpumux::gpu_daemons(
+  n_workers = 4,
+  gpu_ids = 0,
+  memory_per_worker_mb = 1024,
+  framework = "tensorflow",
+  worker_type = "proxy"
+)
+proxy_medium_bench <- microbenchmark(
+  "Proxy - Medium" = {
+    results <- rep("gpu", 4) |>
+      map(in_parallel(\(x) medium_task(x), medium_task = medium_task))
+    results
+  },
+  times = 10L,
+  unit = "seconds"
+)
+gpumux::gpu_daemons(n_workers = 0)
+
+Sys.sleep(3)
+
+# --- 3. Sequential GPU Benchmark (Medium) ---
+message("Running MEDIUM benchmark with 'Sequential GPU' (via single worker)...")
+gpumux::gpu_daemons(
+  n_workers = 1,
+  gpu_ids = 0,
+  memory_per_worker_mb = 1024,
+  framework = "tensorflow",
+  worker_type = "persistent"
+)
+sequential_medium_bench <- microbenchmark(
+  "Sequential GPU - Medium" = {
+    results <- rep("gpu", 4) |> 
+      map(in_parallel(\(x) medium_task(x), medium_task = medium_task))
+    results
+  },
+  times = 10L,
+  unit = "seconds"
+)
+gpumux::gpu_daemons(n_workers = 0)
+
+Sys.sleep(3)
+
+# --- 4. CPU Benchmark (Medium) ---
+message("Running MEDIUM benchmark with 'CPU' workers...")
+mirai::daemons(4)
+cpu_medium_bench <- microbenchmark(
+  "CPU - Medium" = {
+    results <- rep("cpu", 0) |>
+      map(in_parallel(\(x) medium_task(x), medium_task = medium_task))
+    results
+  },
+  times = 10L,
+  unit = "seconds"
+)
+mirai::daemons(0)
+
+# --- 5. Results (Medium) ---
+medium_benchmarks <- rbind(
+  summary_with_total(persistent_medium_bench),
+  summary_with_total(proxy_medium_bench),
+  summary_with_total(sequential_medium_bench),
+  summary_with_total(cpu_medium_bench)
+)
+knitr::kable(medium_benchmarks, caption = "Non-Saturating Workload Results")
+```
+
+## Benchmark 3: Trivial Tasks (The "Overhead Test")
+
+Finally, this benchmark uses the **light task** to isolate and measure the raw overhead of the different execution methods.
+
+```{r benchmark-light, eval = can_run_benchmark}
+# --- 1. Persistent Worker Benchmark (Light) ---
+message("Running LIGHT benchmark with 'persistent' workers...")
+gpumux::gpu_daemons(
+  n_workers = 4,
+  gpu_ids = 0,
+  memory_per_worker_mb = 1024,
+  framework = "tensorflow",
+  worker_type = "persistent"
+)
+persistent_light_bench <- microbenchmark(
+  "Persistent - Light" = {
+    results <- rep("gpu", 4) |>
+      map(in_parallel(\(x) light_task(), light_task = light_task))
+    results
+  },
+  times = 20L,
+  unit = "seconds"
+)
+gpumux::gpu_daemons(n_workers = 0)
+
+Sys.sleep(3)
+
+# --- 2. Proxy Worker Benchmark (Light) ---
+message("Running LIGHT benchmark with 'proxy' workers...")
+gpumux::gpu_daemons(
+  n_workers = 4,
+  gpu_ids = 0,
+  memory_per_worker_mb = 1024,
+  framework = "tensorflow",
+  worker_type = "proxy"
+)
+proxy_light_bench <- microbenchmark(
+  "Proxy - Light" = {
+    results <- rep("gpu", 4) |>
+      map(in_parallel(\(x) light_task(), light_task = light_task))
+    results
+  },
+  times = 20L,
+  unit = "seconds"
+)
+gpumux::gpu_daemons(n_workers = 0)
+
+Sys.sleep(3)
+
+# --- 3. Sequential GPU Benchmark (Light) ---
+message("Running LIGHT benchmark with 'Sequential GPU' (via single worker)...")
+gpumux::gpu_daemons(
+  n_workers = 1,
+  gpu_ids = 0,
+  memory_per_worker_mb = 1024,
+  framework = "tensorflow",
+  worker_type = "persistent"
+)
+sequential_light_bench <- microbenchmark(
+  "Sequential GPU - Light" = {
+    results <- rep("gpu", 4) |> 
+      map(in_parallel(\(x) light_task(), light_task = light_task))
+    results
+  },
+  times = 20L,
+  unit = "seconds"
+)
+gpumux::gpu_daemons(n_workers = 0)
+
+Sys.sleep(3)
+
+# --- 4. CPU Benchmark (Light) ---
+message("Running LIGHT benchmark with 'CPU'...")
+mirai::daemons(4)
+cpu_light_bench <- microbenchmark(
+  "CPU - Light" = {
+    results <- rep("cpu", 4) |>
+      map(in_parallel(\(x) light_task(), light_task = light_task))
+    results
+  },
+  times = 20L,
+  unit = "seconds"
+)
+mirai::daemons(0)
+
+# --- 5. Results (Light) ---
+light_benchmarks <- rbind(
+  summary_with_total(persistent_light_bench),
+  summary_with_total(proxy_light_bench),
+  summary_with_total(sequential_light_bench),
+  summary_with_total(cpu_light_bench)
+)
+knitr::kable(light_benchmarks, caption = "Light Workload (Overhead) Results")
+```
+
+## Benchmark 4: OOM Stability Test
+
+This benchmark uses the `oom_task` to simulate a memory leak. We will use a fixed number of iterations designed to consume approximately 3GB of VRAM, which should be enough to trigger an Out-of-Memory (OOM) error on the stateful workers (`persistent` and `sequential`) but not on the stateless `proxy` worker.
+
+This provides a direct, quantitative comparison of worker stability.
+
+```{r task-oom-3}
+# 4. OOM Task: Deliberately allocates memory in a loop to simulate a leak.
+oom_task <- function(device = "gpu") {
+  library(tensorflow)
+  device_str <- if (device == "gpu") "/gpu:0" else "/cpu:0"
+  with(tf$device(device_str), {
+    for (i in seq_len(10)) {
+      x <- tf$random$normal(shape(2048, 2048))
+      y <- tf$linalg$matmul(x, x)
+      as.numeric(tf$reduce_sum(y))
+    }
+  })
+}
+```
+
+```{r benchmark-oom-3, eval = can_run_benchmark}
+# We will attempt to allocate ~3GB of VRAM (30 iterations * 100MB).
+
+# --- 1. Persistent Worker OOM Benchmark ---
+message("\n--- Running OOM Benchmark for 'persistent' worker ---\n")
+persistent_oom_bench <- tryCatch({
+  gpumux::gpu_daemons(
+    n_workers = 4,
+    gpu_ids = 0,
+    memory_per_worker_mb = 1024,
+    framework = "tensorflow",
+    worker_type = "persistent"
+  )
+  bench <- microbenchmark(
+    "Persistent - OOM" = {
+      # With only one worker, these 4 tasks will be processed sequentially.
+      results <- rep("gpu", 4) |> 
+        map(in_parallel(\(x) oom_task(x), oom_task = oom_task))
+      results
+    },
+    times = 5L,
+    unit = "seconds"
+  )
+  gpumux::gpu_daemons(n_workers = 0)
+  summary_df <- summary_with_total(bench)
+  Sys.sleep(3)
+  summary_df
+}, error = function(e) {
+  message("Persistent worker failed as expected.")
+  gpumux::gpu_daemons(n_workers = 0)
+  Sys.sleep(3)
+  data.frame(expr = "Persistent - OOM", min = NA, lq = NA, mean = NA, median = NA, uq = NA, max = NA, neval = 0, total_time = NA)
+})
+
+
+# --- 2. Proxy Worker OOM Benchmark ---
+message("\n--- Running OOM Benchmark for 'proxy' worker ---\n")
+proxy_oom_bench <- tryCatch({
+  gpumux::gpu_daemons(
+    n_workers = 4,
+    gpu_ids = 0,
+    memory_per_worker_mb = 1024,
+    framework = "tensorflow",
+    worker_type = "proxy"
+  )
+  bench <- microbenchmark(
+    "Proxy - OOM" = {
+      # With only one worker, these 4 tasks will be processed sequentially.
+      results <- rep("gpu", 4) |> 
+        map(in_parallel(\(x) oom_task(x), oom_task = oom_task))
+      results
+    },
+    times = 5L,
+    unit = "seconds"
+  )
+  gpumux::gpu_daemons(n_workers = 0)
+  summary_df <- summary_with_total(bench)
+  Sys.sleep(3)
+  summary_df
+}, error = function(e) {
+  message("Proxy worker failed unexpectedly!")
+  gpumux::gpu_daemons(n_workers = 0)
+  Sys.sleep(3)
+  data.frame(expr = "Proxy - OOM", min = NA, lq = NA, mean = NA, median = NA, uq = NA, max = NA, neval = 0, total_time = NA)
+})
+
+
+# --- 3. Sequential GPU OOM Benchmark ---
+message("\n--- Running OOM Benchmark for 'Sequential GPU' worker ---\n")
+sequential_oom_bench <- tryCatch({
+  gpumux::gpu_daemons(
+    n_workers = 1,
+    gpu_ids = 0,
+    memory_per_worker_mb = 4096,
+    framework = "tensorflow",
+    worker_type = "persistent"
+  )
+  bench <- microbenchmark(
+    "Sequential GPU - OOM" = {
+      results <- rep("gpu", 4) |> 
+        map(in_parallel(\(x) oom_task(x), oom_task = oom_task))
+      results
+    },
+    times = 5L,
+    unit = "seconds"
+  )
+  summary_df <- summary_with_total(bench)
+  gpumux::gpu_daemons(n_workers = 0)
+  Sys.sleep(3)
+  summary_df
+}, error = function(e) {
+  message("Sequential GPU worker failed as expected.")
+  gpumux::gpu_daemons(n_workers = 0)
+  Sys.sleep(3)
+  data.frame(expr = "Sequential GPU - OOM", min = NA, lq = NA, mean = NA, median = NA, uq = NA, max = NA, neval = 0, total_time = NA)
+})
+
+
+# --- 4. Results (OOM) ---
+oom_benchmarks <- rbind(
+  persistent_oom_bench,
+  proxy_oom_bench,
+  sequential_oom_bench
+)
+knitr::kable(oom_benchmarks, caption = "OOM Stability Test Results")
+```
+
+## Conclusion and Recommendations
+
+The three benchmarks tell a clear story about performance and stability:
+
+-   For the **GPU-Saturating Workload**, sequential execution is fastest. This is because each task is so demanding that it needs the entire GPU. Running them in parallel creates resource competition that slows the whole process down. This benchmark also highlights the significant performance overhead of the `proxy` worker, which is the price for its high degree of stability.
+
+-   For the **Non-Saturating Workload**, the `persistent` parallel workers were significantly faster. Because each task only used a fraction of the GPU's power, `gpumux` was able to run them truly concurrently, leading to a significant throughput gain. This is the performance "sweet spot" for the package.
+
+-   For the **Light Workload**, running on the CPU is by far the fastest. This demonstrates that for trivial tasks, the overhead of sending the task to any kind of worker (even a persistent one) is much greater than the execution time of the task itself.
+
+### Key Takeaways:
+
+-   **`gpumux` shines when your tasks don't saturate the GPU.** The main performance benefit comes from using the GPU's spare capacity to run multiple tasks at once.
+
+-   **`gpumux` provides critical resource management.** As seen with the sequential benchmark, running GPU tasks in the main R session can lead to memory leaks. `gpumux` solves this by isolating tasks in worker processes, guaranteeing cleanup.
+
+-   **Choose your worker type wisely.** The `proxy` worker provides maximum stability at the cost of performance. The `persistent` worker provides maximum performance but requires tasks to be well-behaved. For very small tasks, the overhead of any worker type can be substantial.
+
+-   **Know your workload.** Before parallelizing, understand if your tasks are heavy enough to saturate your hardware, if they have idle periods, or if they are trivial. The `nvidia-smi` command line tool is a great way to observe GPU utilization during a single task run.

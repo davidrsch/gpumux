@@ -1,0 +1,32 @@
+Package: gpumux
+Title: GPU Task Multiplexer for Mirai
+Version: 0.0.0.9000
+Authors@R: 
+    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"))
+Description: Provides VRAM-aware worker management to safely run multiple
+    'mirai' daemons on one or more GPUs. It supports both
+    high-performance persistent workers and stable proxy workers that
+    isolate tasks in separate processes. The package can also
+    proactively initialize workers for specific deep learning frameworks,
+    configuring GPU memory limits automatically.
+Imports:
+    xml2,
+    mirai,
+    tibble,
+    processx,
+    rlang,
+    tensorflow
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+VignetteBuilder: knitr
+Suggests: 
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown,
+    keras3,
+    microbenchmark,
+    purrr,
+    carrier (>= 0.2.0)
+Config/testthat/edition: 3
