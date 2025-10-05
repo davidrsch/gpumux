@@ -34,7 +34,7 @@ library(purrr)
 # Check if a GPU is available
 gpu_devices <- gpumux::list_gpus()
 can_run_benchmark <- nrow(gpu_devices) > 0
-if (!can_run_benchmark) {
+  if (!is.null(nvidia_gpus) && nrow(nvidia_gpus) > 0) {
   message("No GPU devices detected. Skipping benchmark.")
 }
 ```
