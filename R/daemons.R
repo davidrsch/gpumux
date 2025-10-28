@@ -16,7 +16,7 @@
 #'   the worker to respect the `memory_per_worker_mb` limit.
 
 #' @return A `mirai` daemons object, ready to be used with `mirai::mirai()`.
-#' @importFrom mirai collect_mirai everywhere
+#' @importFrom mirai everywhere
 #' @export
 #' @param worker_type A character string specifying the daemon strategy.
 #'   `"persistent"` (the default) creates long-lived daemons that execute many
@@ -72,6 +72,28 @@ gpu_daemons <- function(
     stop("None of the specified `gpu_ids` were found.", call. = FALSE)
   }
 
+  # Normalize and validate per-GPU memory arguments
+  if (length(memory_per_worker_mb) == 1) {
+    memory_per_worker_mb <- rep(memory_per_worker_mb, nrow(gpu_status))
+  } else if (length(memory_per_worker_mb) != nrow(gpu_status)) {
+    stop(
+      "`memory_per_worker_mb` must be length 1 or match the number of selected GPUs (",
+      nrow(gpu_status),
+      ").",
+      call. = FALSE
+    )
+  }
+  if (length(reserve_memory_mb) == 1) {
+    reserve_memory_mb <- rep(reserve_memory_mb, nrow(gpu_status))
+  } else if (length(reserve_memory_mb) != nrow(gpu_status)) {
+    stop(
+      "`reserve_memory_mb` must be length 1 or match the number of selected GPUs (",
+      nrow(gpu_status),
+      ").",
+      call. = FALSE
+    )
+  }
+
   # Distribute workers
   base_workers <- floor(n_workers / nrow(gpu_status))
   remaining_workers <- n_workers %% nrow(gpu_status)
@@ -108,6 +130,7 @@ gpu_daemons <- function(
         device_env_var <- switch(
           gpu_info$vendor,
           nvidia = "CUDA_VISIBLE_DEVICES",
+          amd = "HIP_VISIBLE_DEVICES",
           stop("Unsupported GPU vendor: ", gpu_info$vendor)
         )
 
@@ -159,7 +182,6 @@ gpu_daemons <- function(
     }
 
     return(daemons)
-
   } else if (worker_type == "proxy") {
     # --- Launch Daemons (Proxy) ---
     .launch_proxy_daemons(gpu_status = gpu_status)

@@ -26,8 +26,7 @@ library(gpumux)
 library(mirai)
 
 # 1. List available GPUs
-# This function is vendor-agnostic and will be improved to support more vendors in the future.
-# For now, it supports NVIDIA GPUs.
+# This function supports multiple vendors (currently NVIDIA and AMD via ROCm).
 gpus <- list_gpus()
 print(gpus)
 
@@ -42,6 +41,10 @@ if (nrow(gpus) > 0) {
     reserve_memory_mb = 1024
   )
 }
+
+# Notes
+# - For NVIDIA, device masking uses CUDA_VISIBLE_DEVICES.
+# - For AMD ROCm, device masking uses HIP_VISIBLE_DEVICES.
 
 # 3. Use the daemons with mirai
 # ... your mirai code here ...

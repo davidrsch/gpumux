@@ -42,7 +42,12 @@
   )
 
   # Write the serialized task to the worker's stdin pipe.
-  px$write_input(saveRDS(task, NULL))
+  # Serialize the task to a raw vector (RDS) and send the bytes.
+  con <- rawConnection(raw(), open = "wb")
+  saveRDS(task, con)
+  input_bytes <- rawConnectionValue(con)
+  close(con)
+  px$write_input(input_bytes)
   px$close_input()
 
   # Wait for the process to finish.
@@ -67,7 +72,9 @@
   }
 
   # Unserialize the result from the raw byte vector.
-  result <- readRDS(rawConnection(output_bytes))
+  con <- rawConnection(output_bytes)
+  on.exit(try(close(con), silent = TRUE), add = TRUE)
+  result <- readRDS(con)
 
   # Propagate errors that occurred within the worker's R code.
   if (inherits(result, "error")) {

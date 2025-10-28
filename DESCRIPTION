@@ -2,7 +2,9 @@ Package: gpumux
 Title: GPU Task Multiplexer for Mirai
 Version: 0.0.0.9000
 Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"))
+    person("David", "Díaz", , "daviddrsch@gmail.com", role = c("aut", "cre"))
+Author: David Díaz [aut, cre]
+Maintainer: David Díaz <daviddrsch@gmail.com>
 Description: Provides VRAM-aware worker management to safely run multiple
     'mirai' daemons on one or more GPUs. It supports both
     high-performance persistent workers and stable proxy workers that
@@ -14,8 +16,7 @@ Imports:
     mirai,
     tibble,
     processx,
-    rlang,
-    tensorflow
+    rlang
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
@@ -29,5 +30,6 @@ Suggests:
     microbenchmark,
     purrr,
     carrier (>= 0.2.0),
-    R6
+    R6,
+    tensorflow
 Config/testthat/edition: 3

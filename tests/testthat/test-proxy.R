@@ -1,8 +1,8 @@
 test_that(".launch_proxy_daemons generates correct mirai config", {
   # Mock dependencies
-  mock_writeLines <- function(...) { }
+  mock_writeLines <- function(...) {}
   mock_tempfile <- function(...) "temp_file.R"
-  mock_reg.finalizer <- function(...) { }
+  mock_reg.finalizer <- function(...) {}
   daemons_list_arg <- NULL
   mock_mirai_daemons <- function(n, .list) {
     daemons_list_arg <<- .list
@@ -53,9 +53,9 @@ test_that(".launch_proxy_daemons generates correct mirai config", {
 })
 
 test_that(".launch_proxy_daemons handles no workers allocated", {
-  mock_writeLines <- function(...) { }
+  mock_writeLines <- function(...) {}
   mock_tempfile <- function(...) "temp_file.R"
-  mock_reg.finalizer <- function(...) { }
+  mock_reg.finalizer <- function(...) {}
   daemons_list_arg <- NULL
   mock_mirai_daemons <- function(n, .list) {
     daemons_list_arg <<- .list
@@ -88,17 +88,41 @@ test_that(".launch_proxy_daemons handles no workers allocated", {
   )
 })
 
-test_that(".launch_proxy_daemons stops for unsupported vendor", {
+test_that(".launch_proxy_daemons sets HIP_VISIBLE_DEVICES for AMD", {
+  # Mock dependencies
+  mock_writeLines <- function(...) {}
+  mock_tempfile <- function(...) "temp_file.R"
+  mock_reg.finalizer <- function(...) {}
+  daemons_list_arg <- NULL
+  mock_mirai_daemons <- function(n, .list) {
+    daemons_list_arg <<- .list
+    lapply(1:n, function(i) structure(list(), class = "daemon"))
+  }
+
   gpu_status <- data.frame(
-    gpu_id = 0,
-    vendor = "amd", # unsupported
-    name = "TEST GPU",
-    workers_allocated = 1,
-    memory_total_mb = 8192
+    gpu_id = 2,
+    vendor = "amd",
+    name = "TEST AMD GPU",
+    workers_allocated = 2,
+    memory_total_mb = 16384
   )
 
-  expect_error(
-    gpumux:::.launch_proxy_daemons(gpu_status),
-    "Unsupported GPU vendor: amd"
+  testthat::with_mocked_bindings(
+    writeLines = mock_writeLines,
+    tempfile = mock_tempfile,
+    reg.finalizer = mock_reg.finalizer,
+    .package = "base",
+    code = {
+      testthat::with_mocked_bindings(
+        daemons = mock_mirai_daemons,
+        .package = "mirai",
+        code = {
+          gpumux:::.launch_proxy_daemons(gpu_status)
+          expect_length(daemons_list_arg, 2)
+          expect_equal(daemons_list_arg[[1]]$env$HIP_VISIBLE_DEVICES, "2")
+          expect_equal(daemons_list_arg[[2]]$env$HIP_VISIBLE_DEVICES, "2")
+        }
+      )
+    }
   )
 })
