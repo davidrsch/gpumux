@@ -82,8 +82,7 @@
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://mirai.r-lib.org" class="external-link">mirai</a></span><span class="op">)</span></span>
 <span></span>
 <span><span class="co"># 1. List available GPUs</span></span>
-<span><span class="co"># This function is vendor-agnostic and will be improved to support more vendors in the future.</span></span>
-<span><span class="co"># For now, it supports NVIDIA GPUs.</span></span>
+<span><span class="co"># This function supports multiple vendors (currently NVIDIA and AMD via ROCm).</span></span>
 <span><span class="va">gpus</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/list_gpus.html">list_gpus</a></span><span class="op">(</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/print.html" class="external-link">print</a></span><span class="op">(</span><span class="va">gpus</span><span class="op">)</span></span>
 <span></span>
@@ -98,6 +97,10 @@
 <span>    reserve_memory_mb <span class="op">=</span> <span class="fl">1024</span></span>
 <span>  <span class="op">)</span></span>
 <span><span class="op">}</span></span>
+<span></span>
+<span><span class="co"># Notes</span></span>
+<span><span class="co"># - For NVIDIA, device masking uses CUDA_VISIBLE_DEVICES.</span></span>
+<span><span class="co"># - For AMD ROCm, device masking uses HIP_VISIBLE_DEVICES.</span></span>
 <span></span>
 <span><span class="co"># 3. Use the daemons with mirai</span></span>
 <span><span class="co"># ... your mirai code here ...</span></span>
@@ -135,7 +138,7 @@
 <div class="developers">
 <h2 data-toc-skip>Developers</h2>
 <ul class="list-unstyled">
-<li>First Last <br><small class="roles"> Author, maintainer </small>   </li>
+<li>David Díaz <br><small class="roles"> Author, maintainer </small>   </li>
 </ul>
 </div>
 
@@ -153,7 +156,7 @@
 
 
     <footer><div class="pkgdown-footer-left">
-  <p>Developed by First Last.</p>
+  <p>Developed by David Díaz.</p>
 </div>
 
 <div class="pkgdown-footer-right">
