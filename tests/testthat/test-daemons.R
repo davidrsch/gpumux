@@ -70,6 +70,39 @@ test_that("correctly allocates workers for a single GPU", {
   )
 })
 
+test_that("allocates AMD workers and sets HIP_VISIBLE_DEVICES", {
+  mock_gpus <- data.frame(
+    gpu_id = 1,
+    vendor = "amd",
+    name = "TEST AMD GPU 1",
+    memory_total_mb = 16384,
+    memory_free_mb = 12000
+  )
+
+  testthat::with_mocked_bindings(
+    code = {
+      testthat::with_mocked_bindings(
+        code = {
+          daemons <- gpumux::gpu_daemons(
+            n_workers = 2,
+            gpu_ids = 1,
+            memory_per_worker_mb = 1000,
+            reserve_memory_mb = 500,
+            worker_type = "persistent"
+          )
+          expect_length(daemons, 2)
+          expect_equal(daemons[[1]]$env$HIP_VISIBLE_DEVICES, "1")
+          expect_equal(daemons[[2]]$env$HIP_VISIBLE_DEVICES, "1")
+        },
+        daemons = mock_mirai_daemons,
+        .package = "mirai"
+      )
+    },
+    list_gpus = mock_list_gpus(mock_gpus),
+    .package = "gpumux"
+  )
+})
+
 test_that("correctly allocates workers for multiple GPUs", {
   mock_gpus <- data.frame(
     gpu_id = c(0, 1),
@@ -157,7 +190,10 @@ test_that("proactive initialization is triggered for frameworks", {
 
   # Create a mock for everywhere that sets a flag
   everywhere_called <- FALSE
-  mock_everywhere <- function(...) { everywhere_called <<- TRUE; invisible(NULL) }
+  mock_everywhere <- function(...) {
+    everywhere_called <<- TRUE
+    invisible(NULL)
+  }
 
   testthat::with_mocked_bindings(
     list_gpus = mock_list_gpus(mock_gpus),
@@ -176,7 +212,10 @@ test_that("proactive initialization is triggered for frameworks", {
             framework = "tensorflow"
           )
           # Check that our mock function was called
-          expect_true(everywhere_called, info = "mirai::everywhere() should be called for initialization")
+          expect_true(
+            everywhere_called,
+            info = "mirai::everywhere() should be called for initialization"
+          )
         }
       )
     }
@@ -272,7 +311,10 @@ test_that("proxy worker type calls .launch_proxy_daemons", {
         memory_per_worker_mb = 1024,
         worker_type = "proxy"
       )
-      expect_true(proxy_launched, info = ".launch_proxy_daemons should be called for worker_type='proxy'")
+      expect_true(
+        proxy_launched,
+        info = ".launch_proxy_daemons should be called for worker_type='proxy'"
+      )
     }
   )
 })

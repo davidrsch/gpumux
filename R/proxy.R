@@ -44,11 +44,14 @@
   writeLines(worker_script_content, worker_script_file)
   writeLines(proxy_script_content, proxy_script_file)
 
-
   # Ensure temp files are cleaned up when the R session ends.
-  reg.finalizer(globalenv(), function(e) {
-    unlink(c(worker_script_file, proxy_script_file))
-  }, onexit = TRUE)
+  reg.finalizer(
+    globalenv(),
+    function(e) {
+      unlink(c(worker_script_file, proxy_script_file))
+    },
+    onexit = TRUE
+  )
 
   # Create daemon configurations.
   all_daemon_configs <- list()
@@ -60,6 +63,7 @@
       device_env_var <- switch(
         gpu_info$vendor,
         nvidia = "CUDA_VISIBLE_DEVICES",
+        amd = "HIP_VISIBLE_DEVICES",
         stop("Unsupported GPU vendor: ", gpu_info$vendor)
       )
 
@@ -68,7 +72,11 @@
         config$env <- list()
         config$env[[device_env_var]] <- as.character(gpu_info$gpu_id)
         # Tell mirai to run the proxy script, passing the worker script's path.
-        config$Rscript_args <- c("--vanilla", proxy_script_file, worker_script_file)
+        config$Rscript_args <- c(
+          "--vanilla",
+          proxy_script_file,
+          worker_script_file
+        )
         config
       })
       all_daemon_configs <- c(all_daemon_configs, gpu_daemon_configs)
@@ -78,11 +86,16 @@
   # Launch the daemons.
   message("GPU Allocation Summary (Proxy Workers):")
   print(tibble::as_tibble(gpu_status[, c(
-    "gpu_id", "vendor", "name", "workers_allocated", "memory_total_mb"
+    "gpu_id",
+    "vendor",
+    "name",
+    "workers_allocated",
+    "memory_total_mb"
   )]))
 
   message(
-    "Launching ", length(all_daemon_configs),
+    "Launching ",
+    length(all_daemon_configs),
     " proxy daemons. Each will spawn a new worker per task."
   )
 
@@ -93,4 +106,3 @@
 
   return(daemons)
 }
-
