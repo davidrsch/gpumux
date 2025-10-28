@@ -16,3 +16,9 @@
 ^codeconv\.yml$
 ^pkgdown$
 ^vignettes/.*_cache$
+^\.git$
+^\.Rprofile$
+^gpumux\.Rcheck$
+^gpumux/$
+^gpumux_.*\.tar\.gz$
+^build\.log$

@@ -2,5 +2,4 @@
 
 export(gpu_daemons)
 export(list_gpus)
-importFrom(mirai,collect_mirai)
 importFrom(mirai,everywhere)
